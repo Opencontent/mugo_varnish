@@ -118,12 +118,18 @@ class StaticCacheMugoVarnish implements ezpStaticCache
     {}
 
     /**
-     * @param integer $urls
+     * @param array $urls
      * @return array
      */
     protected function urls2BanConditions( $urls )
     {
         $return = array();
+
+        $hostMatchingSetting = null;
+        if( $this->settings->hasVariable( 'PurgeUrlBuilder', 'HostMatching' ) )
+        {
+            $hostMatchingSetting = $this->settings->variable( 'PurgeUrlBuilder', 'HostMatching' );
+        }
 
         if( !empty( $urls ) )
         {
@@ -131,35 +137,66 @@ class StaticCacheMugoVarnish implements ezpStaticCache
             {
                 $condition = 'obj.http.X-Ban-Url ~ ^'. $url .'(/?\(.*)?$';
 
-                if( $this->settings->hasVariable( 'PurgeUrlBuilder', 'HostMatching' ) )
+                switch( $hostMatchingSetting )
                 {
-                    switch( $this->settings->variable( 'PurgeUrlBuilder', 'HostMatching' ) )
+                    case 'SiteURL':
                     {
-                        case 'SiteURL':
+                        $siteUrl = $this->getSiteURL();
+                        if( $siteUrl )
                         {
-                            $ini = eZINI::instance();
-                            $siteUrl = $ini->variable( 'SiteSettings', 'SiteURL' );
+                            $condition .= ' && obj.http.X-Ban-Host ~ ' . preg_quote( $siteUrl );
+                        }
 
+                        $return[] = $condition;
+                    }
+                    break;
+
+                    case 'RelatedSiteAccessList':
+                    {
+                        $relatedSiteAccessList = (array)eZINI::instance()->variable('SiteAccessSettings', 'RelatedSiteAccessList');
+                        foreach ($relatedSiteAccessList as $relatedSiteAccess)
+                        {
+                            $siteUrl = $this->getSiteURL($relatedSiteAccess);
                             if( $siteUrl )
                             {
                                 $condition .= ' && obj.http.X-Ban-Host ~ ' . preg_quote( $siteUrl );
+                                $return[] = $condition;
                             }
                         }
-                        break;
-
-                        case 'RelatedSiteAccessList':
-                        {
-
-                        }
-                        break;
                     }
-                }
+                    break;
 
-                $return[] = $condition;
+                    case 'Pattern':
+                    {
+                        if( $this->settings->hasVariable( 'PurgeUrlBuilder', 'HostMatchingPattern' ) )
+                        {
+                            $pattern = $this->settings->variable( 'PurgeUrlBuilder', 'HostMatchingPattern' );
+
+                            $condition .= ' && obj.http.X-Ban-Host ~ ' . $pattern;
+
+                            $return[] = $condition;
+                        }
+                    }
+                    break;
+
+                    default:
+                    {
+                        $return[] = $condition;
+                    }
+                    break;
+                }
             }
         }
 
+        $return = array_unique( $return );
+
         return $return;
+    }
+
+    private function getSiteURL($siteaccess = null)
+    {
+        $ini = eZSiteAccess::getIni($siteaccess);
+        return $ini->variable( 'SiteSettings', 'SiteURL' );
     }
 
     /**
